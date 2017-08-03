@@ -16,24 +16,23 @@
 
 CFLAGS ?= -O2 -Wall
 
-PQCFLAGS = -fPIC
+NSS_CFLAGS = -fPIC
+
+override CFLAGS += $(NSS_CFLAGS)
 
 all: cli libnss_dnsdc.so.2
 
 nss: libnss_dnsdc.so.2
 
-nss-dnsdc.o:
-	$(CC) -o $@ $(LDFLAGS) -DLOGGING=1 -shared -Wl,-soname,$@ $^
-
 cli:
 	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) -DLOGGING=1 nss-dnsdc.c cli.c
 
-libnss_dnsdc.so.2: nss-dnsdc.o
-	$(CC) -o $@ $(LDFLAGS) -DLOGGING=1 -shared -Wl,-soname,$@ $^
+libnss_dnsdc.so.2:
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) -DLOGGING=1 -shared -Wl,-soname,$@ $^ nss-dnsdc.c
 
 clean:
-	rm -f nss-dnsdc.o libnss_dnsdc.so.2 dnstest cli
+	rm -f libnss_dnsdc.so.2 cli
 
-#install: libnss_dnsdc.so.2
-#	install -m 0644 libnss_dnsdc.so.2 /lib/x86_64-linux-gnu/
-#	/sbin/ldconfig -n /lib/x86_64-linux-gnu/ /usr/lib
+install: libnss_dnsdc.so.2
+	install -m 0644 libnss_dnsdc.so.2 /lib/x86_64-linux-gnu/
+	/sbin/ldconfig -n /lib/x86_64-linux-gnu/ /usr/lib
