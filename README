@@ -1,0 +1,41 @@
+Installation
+============
+
+    make libnss_dnsdc.so.2
+    install -m 0644 libnss_dnsdc.so.2 /lib
+    /sbin/ldconfig -n /lib /usr/lib
+
+Description
+===========
+
+- Use c-ares for low-level things like constructing requests and parsing
+  responses
+- separate config /etc/resolv-dcdns.conf; if the config file isn't present it
+  just fails all requests as UNAVAIL (move on to next NSS module in the lookup
+  list)
+- ndots: fix at 1. If any dots, assume fully-qualified and don't append a
+  domainname
+- option "domain" eliminated in favor of "search"
+- timeout T; search X Y Z; nameserver n.n.n.n:N,S
+
+1) the nameserver IPs can be IPv4 or IPv6.  So we might need two sockets in the
+   case both are configured, which may make simple timeouts waiting on all
+   previous sends harder.  Maybe can get around this by either (a) limiting our
+   module to v4 NS IPs only (kinda ugly in theory, but totally ok in practice I
+   think) or (b) Using a v6 socket that maps v4 as well (there's a setsockopt for
+   that)
+   the v4-only thing is probably simpler for our first pass at this, we can
+   always upgrade that part of the strategy later if we have to
+2) The whole A+AAAA querying thing.  glibc's current default behavior is to
+   fire 2x requests immediately to a nameserver when it polls it: one for A and
+   one for AAAA.  And then they have an option to disable that and do them
+   serially with timeouts because it confused some shitty home router/nat boxes.
+
+   glibc's parallel approach seems reasonable: that leaves us with 2x
+   outstanding answers to collect up, and making some policy decisions about when
+   we terminate the search and return results to the user, if we get a response
+   for one type and timeouts for the other...
+
+   looking at how glibc's default nss-dns works for A+AAAA responses behaving
+   differently might be informative as to current thinking.  Could also just
+   reveal that what they're doing is awful
