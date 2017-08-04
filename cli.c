@@ -3,6 +3,7 @@
 #include <nss.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <assert.h>
 
 #include "nss-dnsdc.h"
 
@@ -13,10 +14,18 @@ int main() {
 	char buf[BUFLEN];
 	int errnop, h_errnop;
 	enum nss_status res;
+	struct in_addr **addr_list;
+	int i;
    
-    res	= _nss_dnsdc_gethostbyname2_r("example.org",
+	res	= _nss_dnsdc_gethostbyname2_r("example.org",
 			AF_INET, &host, buf, BUFLEN, &errnop, &h_errnop);
 
-	printf("res=%d\n", res);
+	assert(res == NSS_STATUS_SUCCESS);
+
+	addr_list = (struct in_addr **)host.h_addr_list;
+	for(i = 0; addr_list[i] != NULL; i++) {
+		printf("%s\n", inet_ntoa(*addr_list[i]));
+	}
+
 	return 0;
 }

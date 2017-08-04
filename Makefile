@@ -25,10 +25,10 @@ all: cli libnss_dnsdc.so.2
 nss: libnss_dnsdc.so.2
 
 cli:
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) -DLOGGING=1 nss-dnsdc.c cli.c
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) -DLOGGING=1 nss-dnsdc.c cli.c -lcares
 
 libnss_dnsdc.so.2:
-	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) -DLOGGING=1 -shared -Wl,-soname,$@ $^ nss-dnsdc.c
+	$(CC) -o $@ $(CFLAGS) $(LDFLAGS) -DLOGGING=1 -shared -Wl,-soname,$@ $^ nss-dnsdc.c -lcares
 
 clean:
 	rm -f libnss_dnsdc.so.2 cli

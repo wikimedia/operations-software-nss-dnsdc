@@ -20,12 +20,16 @@
 
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
 #include <unistd.h>
 #include <string.h>
 #include <errno.h>
 #include <nss.h>
 #include <netdb.h>
 #include <arpa/inet.h>
+#include <sys/socket.h>
+
+#include <ares.h>
 
 #ifdef LOGGING
 #include <syslog.h>
@@ -37,6 +41,7 @@
 #define RESOLV_CONF "/etc/resolv-dnsdc.conf"
 #endif
 
+/*
 enum nss_status _nss_dnsdc_gethostbyname4_r(const char *name, struct gaih_addrtuple **pat,
         char *buffer, size_t buflen, int *errnop,
         int *herrnop, int32_t *ttlp)
@@ -44,48 +49,67 @@ enum nss_status _nss_dnsdc_gethostbyname4_r(const char *name, struct gaih_addrtu
 	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname4_r has been invoked");
 	return NSS_STATUS_UNAVAIL;
 }
+*/
 
 enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 		struct hostent *host, char *buf, size_t buflen,
 		int *errnop, int *h_errnop, int32_t *ttlp, char **canonp)
 {
+	// class = 1 (Internet)
+	// qtype = A
+	// recursion desired = yes
+	int fd, dnsclass = 1, qtype = 1, rd = 1, max_udp_size = 512;
+	int pkt_buflen;
+	unsigned char *pkt_buf;
+	unsigned char dnspkg[512];
+	int saddr_buf_len;
+	unsigned short id = 1;
+	struct sockaddr_in dns_server;
+	struct hostent *resolved_host;
+
 	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname3_r has been invoked");
-	return NSS_STATUS_UNAVAIL;
-	/*
-	unsigned int ttl;
-	char sid;
-	struct sockaddr_in **dnsservers = NULL;
-	size_t nlen = 0;
 
-	if (af == AF_INET &&
-			(nlen = strlen(name)) > 0 &&
-			buflen >= nlen + 1 + 2 * sizeof(void *) + sizeof(struct in_addr) + sizeof(void *) &&
-			get_dnss_for_domain(&dnsservers, name) &&
-			dnsq(dnsservers, name, (struct in_addr *)buf, &ttl, &sid) == 0)
-	{
-		host->h_addrtype = af;
-		host->h_length = sizeof(struct in_addr);
-		host->h_addr_list = (char **)buf + sizeof(struct in_addr);
-		host->h_addr_list[0] = buf;
-		host->h_addr_list[1] = NULL;
-		host->h_aliases = (char **)&host->h_addr_list[2];
-		host->h_aliases[0] = NULL;
-		host->h_name = (char *)&host->h_aliases[1];
-		memcpy(host->h_name, name, nlen + 1);
-		if (ttlp != NULL)
-			*ttlp = (int32_t)ttl;
-		if (canonp != NULL)
-			*canonp = host->h_name;
+	// Create socket
+	dns_server.sin_family = AF_INET;
+	dns_server.sin_port = htons(53);
+	inet_pton(AF_INET, "127.0.0.53", &dns_server.sin_addr);
 
-		*errnop = 0;
-		*h_errnop = 0;
-		return NSS_STATUS_SUCCESS;
+	if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+		return NSS_STATUS_UNAVAIL;
+
+	//setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+	// Create DNS query
+	// ARES_SUCCESS, ARES_EBADNAME, ARES_ENOMEM are the possible return values
+	if ((ares_create_query(name, dnsclass, qtype, id, rd,
+		&pkt_buf, &pkt_buflen, max_udp_size)) != ARES_SUCCESS)
+		return NSS_STATUS_UNAVAIL;
+
+	// Send
+	if (sendto(fd, pkt_buf, pkt_buflen, 0, (struct sockaddr *)&dns_server,
+		sizeof(dns_server)) != pkt_buflen) {
+		close(fd);
+		return NSS_STATUS_UNAVAIL;
 	}
 
-	*errnop = EINVAL;
-	*h_errnop = NO_RECOVERY;
-	return NSS_STATUS_UNAVAIL;
-	*/
+	// Recieve
+	saddr_buf_len = recvfrom(fd, dnspkg, sizeof(dnspkg), 0, NULL, NULL);
+
+	// check return value here (eg: saddr_buf_len < 0 NODATA, < 12 NOHDR, ...)
+	//printf("saddr_buf_len: %d\n", saddr_buf_len);
+
+	if ((ares_parse_a_reply(dnspkg, saddr_buf_len, &resolved_host,
+			//&addrttls, &naddrttls)) != ARES_SUCCESS) {
+			NULL, NULL)) != ARES_SUCCESS) {
+		return NSS_STATUS_UNAVAIL;
+	}
+
+	host->h_name = resolved_host->h_name;
+	host->h_aliases = resolved_host->h_aliases;
+	host->h_length = resolved_host->h_length;
+	host->h_addr_list = resolved_host->h_addr_list;
+
+	return NSS_STATUS_SUCCESS;
 }
 
 enum nss_status _nss_dnsdc_gethostbyname2_r(const char *name, int af,
