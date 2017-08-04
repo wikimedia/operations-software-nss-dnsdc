@@ -51,6 +51,13 @@ enum nss_status _nss_dnsdc_gethostbyname4_r(const char *name, struct gaih_addrtu
 }
 */
 
+// From NSS-Modules-Interface.html
+// Possible return values follow. The correct error code must be stored in *errnop.
+// NSS_STATUS_TRYAGAIN  EAGAIN	One of the functions used ran temporarily out of resources or a service is currently not available.
+//                      ERANGE	The provided buffer is not large enough. The function should be called again with a larger buffer.
+// NSS_STATUS_UNAVAIL   ENOENT	A necessary input file cannot be found. (?!)
+// NSS_STATUS_NOTFOUND  ENOENT	The requested entry is not available.
+//
 enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 		struct hostent *host, char *buf, size_t buflen,
 		int *errnop, int *h_errnop, int32_t *ttlp, char **canonp)
@@ -88,13 +95,16 @@ enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 	// Send
 	if (sendto(fd, pkt_buf, pkt_buflen, 0, (struct sockaddr *)&dns_server,
 		sizeof(dns_server)) != pkt_buflen) {
+		ares_free_string(pkt_buf);
 		close(fd);
 		return NSS_STATUS_UNAVAIL;
 	}
 
+	ares_free_string(pkt_buf);
+
 	// Recieve
 	saddr_buf_len = recvfrom(fd, dnspkg, sizeof(dnspkg), 0, NULL, NULL);
-
+	close(fd);
 	// check return value here (eg: saddr_buf_len < 0 NODATA, < 12 NOHDR, ...)
 	//printf("saddr_buf_len: %d\n", saddr_buf_len);
 
