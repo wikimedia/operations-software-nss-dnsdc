@@ -14,7 +14,7 @@
 # along with dnsdc.  If not, see <http://www.gnu.org/licenses/>.
 
 
-CFLAGS ?= -O2 -Wall
+CFLAGS ?= -O2 -Wall -g
 
 NSS_CFLAGS = -fPIC
 
