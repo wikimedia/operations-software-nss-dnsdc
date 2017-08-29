@@ -42,17 +42,6 @@
 #define RESOLV_CONF "/etc/resolv-dnsdc.conf"
 #endif
 
-enum nss_status _nss_dnsdc_gethostbyname4_r(
-		const char *name, struct gaih_addrtuple **pat,
-        char *buffer, size_t buflen, int *errnop,
-        int *herrnop, int32_t *ttlp)
-{
-	//struct gaih_addrtuple *r_tuple, *r_tuple_first = NULL;
-	//char *r_name;
-	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname4_r has been invoked");
-	return NSS_STATUS_UNAVAIL;
-}
-
 // From NSS-Modules-Interface.html
 // Possible return values follow. The correct error code must be stored in *errnop.
 // NSS_STATUS_TRYAGAIN  EAGAIN	One of the functions used ran temporarily out of resources or a service is currently not available.
@@ -60,9 +49,9 @@ enum nss_status _nss_dnsdc_gethostbyname4_r(
 // NSS_STATUS_UNAVAIL   ENOENT	A necessary input file cannot be found. (?!)
 // NSS_STATUS_NOTFOUND  ENOENT	The requested entry is not available.
 //
-enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
-		struct hostent *host, char *buf, size_t buflen,
-		int *errnop, int *h_errnop, int32_t *ttlp, char **canonp)
+static enum nss_status
+getanswer_r(const char *name, char *buffer, size_t buflen, int af,
+		int *errnop, int *h_errnop, struct hostent *result, int32_t *ttlp)
 {
 	// class = 1 (Internet)
 	// recursion desired = yes
@@ -75,11 +64,6 @@ enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 	unsigned short id = 1;
 	struct sockaddr_in dns_server;
 	struct hostent *resolved_host = NULL;
-
-	/*
-	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname3_r(name=%s, af=%d, buflen=%lu)",
-		name, af, buflen);
-	*/
 
 	// See __ns_type in arpa/nameser.h
 	switch (af) {
@@ -133,11 +117,11 @@ enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 
 	if (qtype == ns_t_a) {
 		res_parse_reply = ares_parse_a_reply(dnspkg, saddr_buf_len, &resolved_host,
-				//&addrttls, &naddrttls)) != ARES_SUCCESS) {
+				//&addrttls, &naddrttls)) != ARES_SUCCESS)
 				NULL, NULL);
 	} else if (qtype == ns_t_aaaa) {
 		res_parse_reply = ares_parse_aaaa_reply(dnspkg, saddr_buf_len, &resolved_host,
-				//&addr6ttls, &naddrttls)) != ARES_SUCCESS) {
+				//&addr6ttls, &naddrttls)) != ARES_SUCCESS)
 				NULL, NULL);
 	}
 
@@ -150,28 +134,49 @@ enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	host->h_name = resolved_host->h_name;
-	host->h_aliases = resolved_host->h_aliases;
-	host->h_length = resolved_host->h_length;
-	host->h_addr_list = resolved_host->h_addr_list;
+	result->h_name = resolved_host->h_name;
+	result->h_aliases = resolved_host->h_aliases;
+	result->h_length = resolved_host->h_length;
+	result->h_addr_list = resolved_host->h_addr_list;
 
 	return NSS_STATUS_SUCCESS;
+}
+
+enum nss_status _nss_dnsdc_gethostbyname4_r(
+		const char *name, struct gaih_addrtuple **pat,
+        char *buffer, size_t buflen, int *errnop,
+        int *herrnop, int32_t *ttlp)
+{
+	//struct gaih_addrtuple *r_tuple, *r_tuple_first = NULL;
+	//char *r_name;
+	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname4_r has been invoked");
+	return NSS_STATUS_UNAVAIL;
+}
+
+enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
+		struct hostent *host, char *buf, size_t buflen,
+		int *errnop, int *h_errnop, int32_t *ttlp, char **canonp)
+{
+	/*
+	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname3_r(name=%s, af=%d, buflen=%lu)",
+		name, af, buflen);
+	*/
+
+	return getanswer_r(name, buf, buflen, af, errnop, h_errnop, host, ttlp);
 }
 
 enum nss_status _nss_dnsdc_gethostbyname2_r(const char *name, int af,
 		struct hostent *host, char *buffer, size_t buflen,
 		int *errnop, int *h_errnop)
 {
-	return _nss_dnsdc_gethostbyname3_r(name, af, host, buffer, buflen,
-			errnop, h_errnop, NULL, NULL);
+	return getanswer_r(name, buffer, buflen, af, errnop, h_errnop, host, NULL);
 }
 
 enum nss_status _nss_dnsdc_gethostbyname_r(const char *name,
 		struct hostent *host, char *buffer, size_t buflen,
 		int *errnop, int *h_errnop)
 {
-	return _nss_dnsdc_gethostbyname3_r(name, AF_INET, host, buffer, buflen,
-			errnop, h_errnop, NULL, NULL);
+	return getanswer_r(name, buffer, buflen, AF_INET, errnop, h_errnop, host, NULL);
 }
 
 enum nss_status _nss_dnsdc_gethostbyaddr2_r(const void* addr, socklen_t len,
