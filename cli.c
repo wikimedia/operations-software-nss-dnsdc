@@ -9,7 +9,7 @@
 
 #define BUFLEN 2048
 
-int main() {
+void resolve(const char *hostname, int af, int maxaddrlen) {
 	struct hostent host;
 	char buf[BUFLEN];
 	int errnop, h_errnop;
@@ -17,26 +17,43 @@ int main() {
 	struct in_addr **addr_list;
 	int i;
    
-	int af = AF_INET6;
-	int maxaddrlen = INET6_ADDRSTRLEN;
-	//int af = AF_INET;
-	//int maxaddrlen = INET_ADDRSTRLEN;
+	if (af == AF_INET) {
+		printf("A ");
+	} else if (af == AF_INET6) {
+		printf("AAAA ");
+	}
 
-	res	= _nss_dnsdc_gethostbyname2_r("example.org", af, &host, buf,
-			BUFLEN, &errnop, &h_errnop);
+	printf("%s\n", hostname);
+
+	res	= _nss_dnsdc_gethostbyname2_r(hostname, af, &host, buf, BUFLEN,
+			&errnop, &h_errnop);
 
 	assert(res == NSS_STATUS_SUCCESS || res == NSS_STATUS_NOTFOUND);
 
 	if (res == NSS_STATUS_NOTFOUND) {
-		printf("No data\n");
-		return 0;
+		printf("\tNo data\n");
+		return;
 	}
 
 	addr_list = (struct in_addr **)host.h_addr_list;
 	for(i = 0; addr_list[i] != NULL; i++) {
 		inet_ntop(af, addr_list[i], buf, maxaddrlen);
-		printf("%s\n", buf);
+		printf("\t%s\n", buf);
+	}
+}
+
+int main(int argc, char **argv) {
+	int i;
+
+	if (argc == 1) {
+		resolve("example.org", AF_INET, INET_ADDRSTRLEN);
+		resolve("example.org", AF_INET6, INET6_ADDRSTRLEN);
+		return 0;
 	}
 
+	for (i=1; i<argc;i++) {
+		resolve(argv[i], AF_INET, INET_ADDRSTRLEN);
+		resolve(argv[i], AF_INET6, INET6_ADDRSTRLEN);
+	}
 	return 0;
 }
