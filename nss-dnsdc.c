@@ -43,7 +43,7 @@
 
 const int n_servers = 3;
 const char *nameservers[] = {"8.8.4.1", "8.8.8.8", "127.0.0.53"};
-int timeouts[] = { 500, 20, 5 };
+int timeouts[] = { 500, 100, 5 };
 
 // From NSS-Modules-Interface.html
 // Possible return values follow. The correct error code must be stored in *errnop.
@@ -84,7 +84,8 @@ getanswer_one(const char *nameserver, int timeout, const char *name, char *buffe
 			return NSS_STATUS_UNAVAIL;
 	}
 
-	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname3_r(name=%s, af=%d, buflen=%lu)\n", name, af, buflen);
+	syslog(LOG_DEBUG, "getanswer_one(nameserver=%s, timeout=%d, name=%s, af=%d, buflen=%lu)\n",
+		nameserver, timeout, name, af, buflen);
 
 	// Create socket
 	dns_server.sin_family = AF_INET;
@@ -165,19 +166,23 @@ getanswer_r(const char *name, char *buffer,
 	enum nss_status status;
 
 	for (i=0; i<n_servers; i++) {
-		printf("Trying %s, timeout=%d\n", nameservers[i], timeouts[i]);
-
 		status = getanswer_one(nameservers[i], timeouts[i], name, buffer,
 				buflen, af, errnop, h_errnop, result, ttlp);
 
 		if (status == NSS_STATUS_SUCCESS) {
-			printf("Data received from %s\n", nameservers[i]);
+		//if (*errnop != ETIMEDOUT) {
+			*errnop=0;
+			*h_errnop=1;
+			syslog(LOG_DEBUG, "getanswer_r(name=%s, af=%d, server=%s(%i), timeout=%d) -> NSS_STATUS_%d", name, af, nameservers[i], i, timeouts[i], status);
 			return status;
 		}
 	}
+
+	syslog(LOG_DEBUG, "getanswer_r(name=%s, af=%d) -> NSS_STATUS_%d after going through all servers", name, af, status);
 	return status;
 }
 
+/*
 enum nss_status _nss_dnsdc_gethostbyname4_r(
 		const char *name, struct gaih_addrtuple **pat,
         char *buffer, size_t buflen, int *errnop,
@@ -188,6 +193,7 @@ enum nss_status _nss_dnsdc_gethostbyname4_r(
 	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname4_r has been invoked");
 	return NSS_STATUS_UNAVAIL;
 }
+*/
 
 enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 		struct hostent *host, char *buf, size_t buflen,
@@ -197,6 +203,7 @@ enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname3_r(name=%s, af=%d, buflen=%lu)",
 		name, af, buflen);
 	*/
+	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname3_r(name=%s, af=%d, buflen=%lu)\n", name, af, buflen);
 	return getanswer_r(name, buf, buflen, af, errnop, h_errnop, host, ttlp);
 }
 
