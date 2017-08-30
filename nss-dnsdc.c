@@ -22,7 +22,6 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
-#include <errno.h>
 #include <nss.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -42,6 +41,10 @@
 #define RESOLV_CONF "/etc/resolv-dnsdc.conf"
 #endif
 
+const int n_servers = 3;
+const char *nameservers[] = {"8.8.4.1", "8.8.8.8", "127.0.0.53"};
+int timeouts[] = { 500, 20, 5 };
+
 // From NSS-Modules-Interface.html
 // Possible return values follow. The correct error code must be stored in *errnop.
 // NSS_STATUS_TRYAGAIN  EAGAIN	One of the functions used ran temporarily out of resources or a service is currently not available.
@@ -50,8 +53,9 @@
 // NSS_STATUS_NOTFOUND  ENOENT	The requested entry is not available.
 //
 static enum nss_status
-getanswer_r(const char *name, char *buffer, size_t buflen, int af,
-		int *errnop, int *h_errnop, struct hostent *result, int32_t *ttlp)
+getanswer_one(const char *nameserver, int timeout, const char *name, char *buffer,
+		size_t buflen, int af, int *errnop, int *h_errnop,
+		struct hostent *result, int32_t *ttlp)
 {
 	// class = 1 (Internet)
 	// recursion desired = yes
@@ -64,6 +68,7 @@ getanswer_r(const char *name, char *buffer, size_t buflen, int af,
 	unsigned short id = 1;
 	struct sockaddr_in dns_server;
 	struct hostent *resolved_host = NULL;
+	struct timeval tv;
 
 	// See __ns_type in arpa/nameser.h
 	switch (af) {
@@ -84,13 +89,10 @@ getanswer_r(const char *name, char *buffer, size_t buflen, int af,
 	// Create socket
 	dns_server.sin_family = AF_INET;
 	dns_server.sin_port = htons(53);
-	//inet_pton(AF_INET, "127.0.0.53", &dns_server.sin_addr);
-	inet_pton(AF_INET, "8.8.8.8", &dns_server.sin_addr);
+	inet_pton(AF_INET, nameserver, &dns_server.sin_addr);
 
 	if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
 		return NSS_STATUS_UNAVAIL;
-
-	//setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
 	// Create DNS query
 	// ARES_SUCCESS, ARES_EBADNAME, ARES_ENOMEM are the possible return values
@@ -109,19 +111,31 @@ getanswer_r(const char *name, char *buffer, size_t buflen, int af,
 
 	ares_free_string(pkt_buf);
 
+	// Set receive timeout in ms
+	tv.tv_sec = 0;
+	tv.tv_usec = timeout * 1000;
+	if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0) {
+		return NSS_STATUS_UNAVAIL;
+	}
+
 	// Recieve
-	saddr_buf_len = recvfrom(fd, dnspkg, sizeof(dnspkg), 0, NULL, NULL);
+	saddr_buf_len = recv(fd, dnspkg, sizeof(dnspkg), 0);
 	close(fd);
+
+	if (saddr_buf_len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+		*errnop = ETIMEDOUT;
+		*h_errnop = HOST_NOT_FOUND;
+		return NSS_STATUS_NOTFOUND;
+	}
+
 	// check return value here (eg: saddr_buf_len < 0 NODATA, < 12 NOHDR, ...)
 	//printf("saddr_buf_len: %d\n", saddr_buf_len);
 
 	if (qtype == ns_t_a) {
 		res_parse_reply = ares_parse_a_reply(dnspkg, saddr_buf_len, &resolved_host,
-				//&addrttls, &naddrttls)) != ARES_SUCCESS)
 				NULL, NULL);
 	} else if (qtype == ns_t_aaaa) {
 		res_parse_reply = ares_parse_aaaa_reply(dnspkg, saddr_buf_len, &resolved_host,
-				//&addr6ttls, &naddrttls)) != ARES_SUCCESS)
 				NULL, NULL);
 	}
 
@@ -140,6 +154,28 @@ getanswer_r(const char *name, char *buffer, size_t buflen, int af,
 	result->h_addr_list = resolved_host->h_addr_list;
 
 	return NSS_STATUS_SUCCESS;
+}
+
+static enum nss_status
+getanswer_r(const char *name, char *buffer,
+		size_t buflen, int af, int *errnop, int *h_errnop,
+		struct hostent *result, int32_t *ttlp)
+{
+	int i;
+	enum nss_status status;
+
+	for (i=0; i<n_servers; i++) {
+		printf("Trying %s, timeout=%d\n", nameservers[i], timeouts[i]);
+
+		status = getanswer_one(nameservers[i], timeouts[i], name, buffer,
+				buflen, af, errnop, h_errnop, result, ttlp);
+
+		if (status == NSS_STATUS_SUCCESS) {
+			printf("Data received from %s\n", nameservers[i]);
+			return status;
+		}
+	}
+	return status;
 }
 
 enum nss_status _nss_dnsdc_gethostbyname4_r(
@@ -161,7 +197,6 @@ enum nss_status _nss_dnsdc_gethostbyname3_r(const char *name, int af,
 	syslog(LOG_INFO, "_nss_dnsdc_gethostbyname3_r(name=%s, af=%d, buflen=%lu)",
 		name, af, buflen);
 	*/
-
 	return getanswer_r(name, buf, buflen, af, errnop, h_errnop, host, ttlp);
 }
 
