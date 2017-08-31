@@ -1,3 +1,30 @@
+Reference implementation at resolv/nss_dns/dns-host.c and resolv/res_send.c
+
+All various gethostbynames take the following:
+
+- name
+- buffer
+- buflen
+- errnop
+- h_errnop
+- af
+
+And might return:
+- ttl
+
+Maybe write a wrapper?
+
+4_r just uses this to return results:
+
+struct gaih_addrtuple
+  {
+    struct gaih_addrtuple *next;
+    char *name;
+    int family;
+    uint32_t addr[4];
+    uint32_t scopeid;
+  };
+
 Installation
 ============
 
@@ -8,15 +35,38 @@ Installation
 Description
 ===========
 
+- given: nameserver 1.2.3.4:53,0.1; nameserver 1.2.3.5:53,0.2; 1.2.3.6:53,0.5; attempts 3
+  send query packet to 1.2.3.4:53, block waiting on timeout-or-response for
+  0.1s. if timeout reached, send query to 1.2.3.5:53, block waiting on
+  timeout-or-response for 0.2s. Repeat the process max other two times
+  (attempts=3), at which point we actually fail.
+
+- it's valid/expected/reasonable to configure a per-nameserver timeout of 0.0.
+  This means don't even try to block/receive before moving on to the next
+  (that's how you configure parallel queries to more than one NS at the "same
+  time" it will spam through a list of ,0.0 nameservers before blocking and
+  waiting for any one to respond)
+
 - Use c-ares for low-level things like constructing requests and parsing
   responses
+
+- do recv() calls with fixed timeout values set via SO_RCVTIMEO
+
+- all the sends and all the receive-wait need using the same socket, and the
+  same port number on the client side. ignore the source address of the
+  response packet, just check QID
+
 - separate config /etc/resolv-dcdns.conf; if the config file isn't present it
   just fails all requests as UNAVAIL (move on to next NSS module in the lookup
   list)
+
 - ndots: fix at 1. If any dots, assume fully-qualified and don't append a
   domainname
+
 - option "domain" eliminated in favor of "search"
-- timeout T; search X Y Z; nameserver n.n.n.n:N,S
+
+- attempts N; search X Y Z; nameserver n.n.n.n:P,T
+  P is port number, T is timeout in floating seconds
 
 1) the nameserver IPs can be IPv4 or IPv6.  So we might need two sockets in the
    case both are configured, which may make simple timeouts waiting on all

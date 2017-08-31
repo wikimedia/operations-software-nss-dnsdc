@@ -30,6 +30,7 @@
 #include <netinet/in.h>
 
 #include <ares.h>
+#include <ares_dns.h>
 
 #ifdef LOGGING
 #include <syslog.h>
@@ -44,6 +45,7 @@
 const int n_servers = 3;
 const char *nameservers[] = {"8.8.4.1", "8.8.8.8", "127.0.0.53"};
 int timeouts[] = { 500, 100, 5 };
+int attempts = 2;
 
 // From NSS-Modules-Interface.html
 // Possible return values follow. The correct error code must be stored in *errnop.
@@ -53,19 +55,19 @@ int timeouts[] = { 500, 100, 5 };
 // NSS_STATUS_NOTFOUND  ENOENT	The requested entry is not available.
 //
 static enum nss_status
-getanswer_one(const char *nameserver, int timeout, const char *name, char *buffer,
+getanswer_one(const char *nameserver, int fd, int timeout, const char *name, char *buffer,
 		size_t buflen, int af, int *errnop, int *h_errnop,
 		struct hostent *result, int32_t *ttlp)
 {
 	// class = 1 (Internet)
 	// recursion desired = yes
-	int fd, qtype, dnsclass = 1, rd = 1, max_udp_size = 512;
+	int qtype, dnsclass = 1, rd = 1, max_udp_size = 512;
 	int pkt_buflen;
 	int res_parse_reply = ARES_SUCCESS;
 	unsigned char *pkt_buf;
 	unsigned char dnspkg[512];
 	int saddr_buf_len;
-	unsigned short id = 1;
+	unsigned short id = rand() % 65536;
 	struct sockaddr_in dns_server;
 	struct hostent *resolved_host = NULL;
 	struct timeval tv;
@@ -84,16 +86,7 @@ getanswer_one(const char *nameserver, int timeout, const char *name, char *buffe
 			return NSS_STATUS_UNAVAIL;
 	}
 
-	syslog(LOG_DEBUG, "getanswer_one(nameserver=%s, timeout=%d, name=%s, af=%d, buflen=%lu)\n",
-		nameserver, timeout, name, af, buflen);
-
-	// Create socket
-	dns_server.sin_family = AF_INET;
-	dns_server.sin_port = htons(53);
-	inet_pton(AF_INET, nameserver, &dns_server.sin_addr);
-
-	if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
-		return NSS_STATUS_UNAVAIL;
+	syslog(LOG_DEBUG, "getanswer_one(nameserver=%s, fd=%d, timeout=%d, name=%s, af=%d, buflen=%lu)\n", nameserver, fd, timeout, name, af, buflen);
 
 	// Create DNS query
 	// ARES_SUCCESS, ARES_EBADNAME, ARES_ENOMEM are the possible return values
@@ -103,10 +96,13 @@ getanswer_one(const char *nameserver, int timeout, const char *name, char *buffe
 	}
 
 	// Send
+	dns_server.sin_family = AF_INET;
+	dns_server.sin_port = htons(53);
+	inet_pton(AF_INET, nameserver, &dns_server.sin_addr);
+
 	if (sendto(fd, pkt_buf, pkt_buflen, 0, (struct sockaddr *)&dns_server,
 		sizeof(dns_server)) != pkt_buflen) {
 		ares_free_string(pkt_buf);
-		close(fd);
 		return NSS_STATUS_UNAVAIL;
 	}
 
@@ -121,7 +117,6 @@ getanswer_one(const char *nameserver, int timeout, const char *name, char *buffe
 
 	// Recieve
 	saddr_buf_len = recv(fd, dnspkg, sizeof(dnspkg), 0);
-	close(fd);
 
 	if (saddr_buf_len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 		*errnop = ETIMEDOUT;
@@ -144,6 +139,11 @@ getanswer_one(const char *nameserver, int timeout, const char *name, char *buffe
 		return NSS_STATUS_NOTFOUND;
 	}
 
+	if (id != DNS_HEADER_QID(dnspkg)) {
+		syslog(LOG_DEBUG, "getanswer_one(nameserver=%s, name=%s, af=%d) response Query ID %d !=request Query ID %d\n", nameserver, name, af, DNS_HEADER_QID(dnspkg), id);
+		return NSS_STATUS_UNAVAIL;
+	}
+
 	if (res_parse_reply != ARES_SUCCESS) {
 		// Possible values here are: ARES_EBADRESP, ARES_ENOMEM
 		return NSS_STATUS_UNAVAIL;
@@ -162,23 +162,36 @@ getanswer_r(const char *name, char *buffer,
 		size_t buflen, int af, int *errnop, int *h_errnop,
 		struct hostent *result, int32_t *ttlp)
 {
-	int i;
-	enum nss_status status;
+	int i, fd, attempt;
+	enum nss_status status = NSS_STATUS_UNAVAIL;
 
-	for (i=0; i<n_servers; i++) {
-		status = getanswer_one(nameservers[i], timeouts[i], name, buffer,
-				buflen, af, errnop, h_errnop, result, ttlp);
+	// Create socket
+	if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
+		return NSS_STATUS_UNAVAIL;
 
-		if (status == NSS_STATUS_SUCCESS) {
-		//if (*errnop != ETIMEDOUT) {
-			*errnop=0;
-			*h_errnop=1;
-			syslog(LOG_DEBUG, "getanswer_r(name=%s, af=%d, server=%s(%i), timeout=%d) -> NSS_STATUS_%d", name, af, nameservers[i], i, timeouts[i], status);
-			return status;
+	for (attempt=0; attempt<attempts; attempt++) {
+		syslog(LOG_DEBUG, "getanswer_r(name=%s, af=%d) %d/%d attempts\n",
+			name, af, attempt+1, attempts);
+
+		for (i=0; i<n_servers; i++) {
+			status = getanswer_one(nameservers[i], fd, timeouts[i], name, buffer,
+					buflen, af, errnop, h_errnop, result, ttlp);
+
+			if (status == NSS_STATUS_SUCCESS) {
+			//if (*errnop != ETIMEDOUT) {
+				*errnop=0;
+				*h_errnop=1;
+				syslog(LOG_DEBUG, "getanswer_r(name=%s, af=%d, server=%s(%i), timeout=%d) -> NSS_STATUS_%d", name, af, nameservers[i], i, timeouts[i], status);
+
+				close(fd);
+				return status;
+			}
 		}
 	}
 
 	syslog(LOG_DEBUG, "getanswer_r(name=%s, af=%d) -> NSS_STATUS_%d after going through all servers", name, af, status);
+
+	close(fd);
 	return status;
 }
 
