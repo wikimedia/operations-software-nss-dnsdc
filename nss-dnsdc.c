@@ -43,8 +43,8 @@
 #endif
 
 const int n_servers = 3;
-const char *nameservers[] = {"8.8.4.1", "8.8.8.8", "127.0.0.53"};
-int timeouts[] = { 500, 100, 5 };
+const char *nameservers[] = {"8.8.4.4", "127.0.0.53", "8.8.8.8"};
+int timeouts[] = { 1, 1, 999 };
 int attempts = 2;
 
 // From NSS-Modules-Interface.html
@@ -55,7 +55,7 @@ int attempts = 2;
 // NSS_STATUS_NOTFOUND  ENOENT	The requested entry is not available.
 //
 static enum nss_status
-getanswer_one(const char *nameserver, int fd, int timeout, const char *name, char *buffer,
+getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, const char *name, char *buffer,
 		size_t buflen, int af, int *errnop, int *h_errnop,
 		struct hostent *result, int32_t *ttlp)
 {
@@ -67,10 +67,11 @@ getanswer_one(const char *nameserver, int fd, int timeout, const char *name, cha
 	unsigned char *pkt_buf;
 	unsigned char dnspkg[512];
 	int saddr_buf_len;
-	unsigned short id = rand() % 65536;
 	struct sockaddr_in dns_server;
 	struct hostent *resolved_host = NULL;
 	struct timeval tv;
+	struct sockaddr_in src_addr;
+	socklen_t src_addrlen;
 
 	// See __ns_type in arpa/nameser.h
 	switch (af) {
@@ -116,13 +117,17 @@ getanswer_one(const char *nameserver, int fd, int timeout, const char *name, cha
 	}
 
 	// Recieve
-	saddr_buf_len = recv(fd, dnspkg, sizeof(dnspkg), 0);
+	src_addrlen = sizeof(src_addr);
+	saddr_buf_len = recvfrom(fd, dnspkg, sizeof(dnspkg), 0, (struct sockaddr *) &src_addr, &src_addrlen);
 
 	if (saddr_buf_len == -1 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
 		*errnop = ETIMEDOUT;
 		*h_errnop = HOST_NOT_FOUND;
 		return NSS_STATUS_NOTFOUND;
 	}
+
+	syslog(LOG_DEBUG, "getanswer_one: response from %s:%d\n",
+		inet_ntoa(src_addr.sin_addr), htons(src_addr.sin_port));
 
 	// check return value here (eg: saddr_buf_len < 0 NODATA, < 12 NOHDR, ...)
 	//printf("saddr_buf_len: %d\n", saddr_buf_len);
@@ -164,6 +169,7 @@ getanswer_r(const char *name, char *buffer,
 {
 	int i, fd, attempt;
 	enum nss_status status = NSS_STATUS_UNAVAIL;
+	unsigned short qid = rand() % 65536;
 
 	// Create socket
 	if ((fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)) == -1)
@@ -174,7 +180,7 @@ getanswer_r(const char *name, char *buffer,
 			name, af, attempt+1, attempts);
 
 		for (i=0; i<n_servers; i++) {
-			status = getanswer_one(nameservers[i], fd, timeouts[i], name, buffer,
+			status = getanswer_one(nameservers[i], fd, qid, timeouts[i], name, buffer,
 					buflen, af, errnop, h_errnop, result, ttlp);
 
 			if (status == NSS_STATUS_SUCCESS) {
