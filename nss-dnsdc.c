@@ -22,6 +22,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <string.h>
+#include <sys/time.h>
 #include <nss.h>
 #include <netdb.h>
 #include <arpa/inet.h>
@@ -72,6 +73,10 @@ getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, co
 	struct timeval tv;
 	struct sockaddr_in src_addr;
 	socklen_t src_addrlen;
+	struct timeval starttime, endtime;
+	double elapsed;
+
+	gettimeofday(&starttime, NULL);
 
 	// See __ns_type in arpa/nameser.h
 	switch (af) {
@@ -86,8 +91,6 @@ getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, co
 		default:
 			return NSS_STATUS_UNAVAIL;
 	}
-
-	syslog(LOG_DEBUG, "getanswer_one(nameserver=%s, fd=%d, timeout=%d, name=%s, af=%d, buflen=%lu)\n", nameserver, fd, timeout, name, af, buflen);
 
 	// Create DNS query
 	// ARES_SUCCESS, ARES_EBADNAME, ARES_ENOMEM are the possible return values
@@ -109,6 +112,9 @@ getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, co
 
 	ares_free_string(pkt_buf);
 
+	syslog(LOG_DEBUG, "%s %s query sent to %s, fd=%d with timeout=%d\n",
+			name, qtype == ns_t_aaaa ? "AAAA" : "A", nameserver, fd, timeout);
+
 	// Set receive timeout in ms
 	tv.tv_sec = 0;
 	tv.tv_usec = timeout * 1000;
@@ -125,9 +131,6 @@ getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, co
 		*h_errnop = HOST_NOT_FOUND;
 		return NSS_STATUS_NOTFOUND;
 	}
-
-	syslog(LOG_DEBUG, "getanswer_one: response from %s:%d\n",
-		inet_ntoa(src_addr.sin_addr), htons(src_addr.sin_port));
 
 	// check return value here (eg: saddr_buf_len < 0 NODATA, < 12 NOHDR, ...)
 	//printf("saddr_buf_len: %d\n", saddr_buf_len);
@@ -148,6 +151,14 @@ getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, co
 		syslog(LOG_DEBUG, "getanswer_one(nameserver=%s, name=%s, af=%d) response Query ID %d !=request Query ID %d\n", nameserver, name, af, DNS_HEADER_QID(dnspkg), id);
 		return NSS_STATUS_UNAVAIL;
 	}
+
+	gettimeofday(&endtime, 0);
+
+	elapsed = (endtime.tv_sec - starttime.tv_sec) * 1000.0 + \
+			  (endtime.tv_usec - starttime.tv_usec) / 1000.0;
+
+	syslog(LOG_DEBUG, "getanswer_one: response from %s:%d in %g msecs\n",
+		inet_ntoa(src_addr.sin_addr), htons(src_addr.sin_port), elapsed);
 
 	if (res_parse_reply != ARES_SUCCESS) {
 		// Possible values here are: ARES_EBADRESP, ARES_ENOMEM
