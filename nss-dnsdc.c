@@ -75,6 +75,7 @@ getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, co
 	socklen_t src_addrlen;
 	struct timeval starttime, endtime;
 	double elapsed;
+	int n;
 
 	gettimeofday(&starttime, NULL);
 
@@ -165,10 +166,37 @@ getanswer_one(const char *nameserver, int fd, unsigned short id, int timeout, co
 		return NSS_STATUS_UNAVAIL;
 	}
 
-	result->h_name = resolved_host->h_name;
-	result->h_aliases = resolved_host->h_aliases;
+	// Copy results
+	result->h_name = strdup(resolved_host->h_name);
 	result->h_length = resolved_host->h_length;
-	result->h_addr_list = resolved_host->h_addr_list;
+	result->h_addrtype = resolved_host->h_addrtype;
+
+	// Count number of addresses
+	for (n=0; resolved_host->h_addr_list[n]; n++) ;
+
+	// Copy addresses
+	result->h_addr_list = calloc(n+1, sizeof(char *));
+	result->h_addr_list[0] = calloc(n, resolved_host->h_length);
+	if (n)
+		memcpy(result->h_addr_list[0], resolved_host->h_addr_list[0], n*resolved_host->h_length);
+
+	while (n > 1) {
+		n--;
+		result->h_addr_list[n] = result->h_addr_list[0] + (n * resolved_host->h_length);
+	}
+
+	// Count and copy aliases
+	for (n=0; resolved_host->h_aliases[n]; n++) ;
+
+	result->h_aliases = calloc(n+1, sizeof(char *));
+	while (n) {
+		if (resolved_host->h_aliases[n]) {
+			result->h_aliases[n] = strdup(resolved_host->h_aliases[n]);
+		}
+		n--;
+	}
+
+	ares_free_hostent(resolved_host);
 
 	return NSS_STATUS_SUCCESS;
 }

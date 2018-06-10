@@ -36,3 +36,6 @@ clean:
 install: libnss_dnsdc.so.2
 	install -m 0644 libnss_dnsdc.so.2 /lib/x86_64-linux-gnu/
 	/sbin/ldconfig -n /lib/x86_64-linux-gnu/ /usr/lib
+
+check: cli
+	valgrind --track-origins=yes --leak-check=full ./cli icanhazip.com

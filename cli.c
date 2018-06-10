@@ -1,16 +1,19 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <nss.h>
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <assert.h>
 
+#include <ares.h>
+
 #include "nss-dnsdc.h"
 
 #define BUFLEN 2048
 
 void resolve(const char *hostname, int af, int maxaddrlen) {
-	struct hostent host;
+	struct hostent *host = malloc(sizeof(struct hostent));
 	char buf[BUFLEN];
 	int errnop, h_errnop;
 	enum nss_status res;
@@ -25,7 +28,7 @@ void resolve(const char *hostname, int af, int maxaddrlen) {
 
 	printf("%s\n", hostname);
 
-	res	= _nss_dnsdc_gethostbyname2_r(hostname, af, &host, buf, BUFLEN,
+	res	= _nss_dnsdc_gethostbyname2_r(hostname, af, host, buf, BUFLEN,
 			&errnop, &h_errnop);
 
 	assert(res == NSS_STATUS_SUCCESS || res == NSS_STATUS_NOTFOUND);
@@ -35,11 +38,13 @@ void resolve(const char *hostname, int af, int maxaddrlen) {
 		return;
 	}
 
-	addr_list = (struct in_addr **)host.h_addr_list;
+	addr_list = (struct in_addr **)host->h_addr_list;
 	for(i = 0; addr_list[i] != NULL; i++) {
 		inet_ntop(af, addr_list[i], buf, maxaddrlen);
 		printf("\t%s\n", buf);
 	}
+
+	ares_free_hostent(host);
 }
 
 int main(int argc, char **argv) {
